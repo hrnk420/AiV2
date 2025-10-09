@@ -88,13 +88,14 @@ current_wait_time = MIN_WAIT_TIME
 consecutive_successes = 0
 consecutive_failures = 0
 
+# システムインストラクションを定義
+SYSTEM_INSTRUCTION = "あなたは、簡潔な回答を生成するアシスタントです。いかなる場合でも、あなたの回答は必ず日本語で、句読点を含めて100文字以内でなければなりません。追加の説明や謝罪、前置きや後書きは一切不要です。"
+
 for count, prompt in enumerate(questions_to_process, 1):
-    model = genai.GenerativeModel(model_name)
-    print(f"[{len(existing_results) + count}/{len(all_questions)}] 🧠 '{prompt[:30]}...' を生成中...")
-    
-    # プロンプトに文字数制限の指示を強化
-    modified_prompt = f"{prompt}。回答は厳密に100文字以内に完結させてください。"
-    
+    # モデルにシステムインストラクションを渡す
+    model = genai.GenerativeModel(model_name, system_instruction=SYSTEM_INSTRUCTION)
+    print(f"[{len(existing_results) + count}/{len(all_questions)}] '{prompt[:30]}...' を生成中...")
+
     # 質問内容に応じてmax_output_tokensを動的に設定
     max_tokens_for_this_request = 2048 if "コード" in prompt or "python" in prompt.lower() else 1024
 
@@ -102,7 +103,7 @@ for count, prompt in enumerate(questions_to_process, 1):
     for attempt in range(MAX_RETRIES):
         try:
             response = model.generate_content(
-                modified_prompt, # 修正したプロンプトを使用
+                prompt, # 元のプロンプトをそのまま使用
                 generation_config=genai.types.GenerationConfig(
                     temperature=0.7,
                     max_output_tokens=max_tokens_for_this_request # 動的に設定した値を使用
@@ -112,10 +113,10 @@ for count, prompt in enumerate(questions_to_process, 1):
             break # 成功したらリトライループを抜ける
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
-                print(f"    ⚠️ エラー: {e}。{RETRY_WAIT_SECONDS}秒後に再試行します… (試行 {attempt + 1}/{MAX_RETRIES})")
+                print(f"    Warning エラー: {e}。{RETRY_WAIT_SECONDS}秒後に再試行します… (試行 {attempt + 1}/{MAX_RETRIES})")
                 countdown_timer(RETRY_WAIT_SECONDS) # リトライ待機もカウントダウン表示
             else:
-                print(f"    ❌ エラー: {e}。最大試行回数 ({MAX_RETRIES}) を超えました。この質問の処理をスキップします。")
+                print(f"    Error エラー: {e}。最大試行回数 ({MAX_RETRIES}) を超えました。この質問の処理をスキップします。")
                 response = None # 最終的に失敗した場合はresponseをNoneにする
 
     # リトライ成功した場合、または最終的に失敗した場合の処理
@@ -126,7 +127,7 @@ for count, prompt in enumerate(questions_to_process, 1):
                 record = {"prompt": prompt, "response": answer}
                 existing_results.append(record)
                 newly_added_count += 1
-                print(f"    ✅ 生成完了")
+                print(f"    OK 生成完了")
 
                 # 成功した場合のみ待機処理を実行
                 if count < total_to_process:
@@ -137,7 +138,7 @@ for count, prompt in enumerate(questions_to_process, 1):
                     countdown_timer(int(current_wait_time)) 
             else:
                 reason = response.candidates[0].finish_reason.name if response.candidates else 'N/A'
-                print(f"    ⚠️ 応答が生成されませんでした。理由: {reason}")
+                print(f"    Warning 応答が生成されませんでした。理由: {reason}")
                 # 応答がない場合も、次の処理まで少し待つ
                 if count < total_to_process:
                     # 失敗時の待機時間調整
@@ -146,7 +147,7 @@ for count, prompt in enumerate(questions_to_process, 1):
                     current_wait_time = min(MAX_WAIT_TIME, current_wait_time * WAIT_TIME_INCREASE_FACTOR)
                     countdown_timer(int(current_wait_time)) # 失敗時は長めの待機
         else:
-            print(f"    ⚠️ この質問の生成は最終的に失敗しました。スキップします。")
+            print(f"    Warning この質問の生成は最終的に失敗しました。スキップします。")
             # 失敗した場合も、次の処理まで少し待つ
             if count < total_to_process:
                 # 失敗時の待機時間調整
@@ -159,7 +160,7 @@ for count, prompt in enumerate(questions_to_process, 1):
         print("\n処理が中断されました。現在までの結果を保存します。")
         break
     except Exception as e:
-        print(f"    ⚠️ 予期せぬエラー: {e}")
+        print(f"    Warning 予期せぬエラー: {e}")
         print("処理を中断し、現在までの結果を保存します。")
         break
     finally:
@@ -172,7 +173,7 @@ for count, prompt in enumerate(questions_to_process, 1):
 
 print("\n" + "="*30)
 if newly_added_count > 0:
-    print(f"🎉 今回 {newly_added_count} 件の新しい結果を追加し、合計 {len(existing_results)} 件を '{output_file}' に保存しました。")
+    print(f"今回 {newly_added_count} 件の新しい結果を追加し、合計 {len(existing_results)} 件を '{output_file}' に保存しました。")
 else:
     print("新しい結果は追加されませんでした。")
 print("="*30)
