@@ -1,60 +1,58 @@
+# 推論モード (Phi-2版・軽量高性能)
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import PeftModel
 import os
 import time
 
+# プロンプトテンプレート (Phi-2 形式)
+PROMPT_TEMPLATE = "Instruct: {instruction}\nOutput: "
+
 def main():
-    lora_model_path = "./lora_output"
-    base_model_path = "./mpt-7b-instruct"
-    offload_folder = "D:/aiV2_offload"
+    # 学習時と同じモデルを使用
+    lora_model_path = "./lora_output_phi2"
+    base_model_path = "microsoft/phi-2"
 
-    # オフロード先がなければ作成
-    if not os.path.exists(offload_folder):
-        os.makedirs(offload_folder)
+    # ハードウェア検知
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device}")
 
-    # ── トークナイザー ──
+    # トークナイザー
     tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
-
-    # EOSトークンをPADトークンとして設定（MPT系モデル対応）
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # ── CPU + オフロードでベースモデルロード ──
+    # モデルロード
+    print(f"Loading base model: {base_model_path}...")
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
-        torch_dtype=torch.float32,
+        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
         trust_remote_code=True,
-        device_map={"": "cpu"},
-        offload_folder=offload_folder
+        device_map="auto" if device == "cuda" else {"": "cpu"},
     )
 
-    # ── LoRA適用 ──
-    model = PeftModel.from_pretrained(
-        base_model,
-        lora_model_path,
-        torch_dtype=torch.float32,
-        device_map={"": "cpu"},
-        offload_folder=offload_folder
-    )
+    # LoRA適用
+    if os.path.exists(lora_model_path):
+        print(f"Loading LoRA weights from {lora_model_path}...")
+        model = PeftModel.from_pretrained(base_model, lora_model_path)
+    else:
+        print("Warning: 学習済みデータが見つかりません。ベースモデルのみで対話します。")
+        model = base_model
+
     model.eval()
 
-    print("=== 推論モード（CPU＋LoRA＋オフロード） ===")
-    print("終了するには 'exit' と入力してください")
+    print("\n=== 対話モード（終了するには 'exit' と入力） ===")
 
     while True:
-        prompt = input("\n入力してください: ")
-        if prompt.lower() == "exit":
+        user_input = input("\n質問を入力してください: ")
+        if user_input.lower() == "exit":
             break
 
-        # トークナイズ（安全パディング）
-        inputs = tokenizer(prompt, return_tensors="pt", padding=True).to("cpu")
-        if inputs["input_ids"].size(1) == 0:
-            print("Warning: 入力が空です。文字列を確認してください。")
-            continue
-
-        # 推論
-        print("\n⏳ 応答を生成中です。CPUでの処理には数分かかることがあります。お待ちください...")
+        # プロンプト作成
+        full_prompt = PROMPT_TEMPLATE.format(instruction=user_input)
+        inputs = tokenizer(full_prompt, return_tensors="pt").to(device)
+        
+        print("\n⏳ 思考中...")
         start_time = time.time()
         try:
             with torch.no_grad():
@@ -62,24 +60,21 @@ def main():
                     **inputs,
                     max_new_tokens=256,
                     do_sample=True,
-                    temperature=1.0,
-                    top_p=0.95,
-                    top_k=50
+                    temperature=0.7,
+                    top_p=0.9,
+                    repetition_penalty=1.1,
+                    eos_token_id=tokenizer.eos_token_id,
                 )
-            end_time = time.time()
-            duration = end_time - start_time
-            print(f"    (生成時間: {duration:.2f}秒)")
-
-            text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-            print("\n=== モデル出力 ===")
-            print(text)
+            
+            # 応答部分のみデコード
+            response_ids = outputs[0][inputs["input_ids"].shape[1]:]
+            text = tokenizer.decode(response_ids, skip_special_tokens=True)
+            
+            print(f"\n=== モデルの回答 (生成時間: {time.time() - start_time:.2f}秒) ===")
+            print(text.strip())
 
         except Exception as e:
-            end_time = time.time()
-            duration = end_time - start_time
-            print(f"\nError: 応答の生成中にエラーが発生しました。(処理時間: {duration:.2f}秒)")
-            print(f"    詳細: {e}")
-            continue
+            print(f"\nエラーが発生しました: {e}")
 
 if __name__ == "__main__":
     main()

@@ -1,16 +1,34 @@
-# Virtual Environment
+# --- 秘密情報 (絶対NG) ---
+.env
+
+# --- 巨大なフォルダ・モデル本体 (GitHubの制限を超えるため) ---
 venv/
-
-# Large model files
+.venv/
+offload/
+lora_output*/
 mpt-7b-instruct/
-lora_output/
+microsoft/
+phi-2/
+*.bin
+*.safetensors
+*.pt
+*.pth
 
-# Generated data
-data.json
-
-# Python cache
+# --- Pythonの一時ファイル ---
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
 
-# Hugging Face cache
-.cache/
+# --- OSの一時ファイル ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+
+# --- エディタ設定 ---
+.vscode/
+.idea/
+*.swp
+*.swo
