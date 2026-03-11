@@ -1,46 +1,44 @@
-# MPT-7B-Instruct ファインチューニング プロジェクト
+# AI-v2: Phi-2 & Gemini 連携ファインチューニング・システム
 
-このプロジェクトは、MosaicML社が開発した`mosaicml/mpt-7b-instruct`モデルをベースに、独自のデータセットでファインチューニングを行い、対話形式の推論を実行するためのリポジトリです。
+このプロジェクトは、Googleの **Gemini 1.5 Flash API** を使用して高品質な学習データを自動生成し、Microsoftの軽量・高性能モデル **Phi-2** をベースに **LoRA (Low-Rank Adaptation)** を用いて独自の微調整（ファインチューニング）を行うための統合ツールキットです。
 
-## 特徴
-
-- **データ生成**: Gemini APIを利用して、質問リストから独自のQ&Aデータセットを生成します。
-- **ファインチューニング**: PEFT(LoRA)を用いて、効率的にモデルの追加学習を行います。
-- **CPU実行対応**: GPUがない環境でも、CPUオフロードを利用してモデルの学習と推論が可能です。（※非常に時間がかかります）
+Windows環境のCPUのみでも動作するように最適化されており、GPU（CUDA）があれば自動的に検知して高速な学習・量子化推論を行います。
 
 ---
 
-## 1. 環境構築
+## 主な特徴
 
-### 1.1. リポジトリのクローン
+- **自動データ生成 (`datacreate.py`)**: Gemini 1.5 Flash API を活用し、質問リストからプログラミング解説データセットを自動構築。
+- **軽量・高性能モデル (`Phi-2`)**: 27億パラメータながら高い性能を持つ `microsoft/phi-2` を採用。低メモリ環境でも動作可能。
+- **ハードウェア自動最適化**: CUDAが利用可能な場合は、4ビット量子化（bitsandbytes）とFP16演算を自動適用。
+- **一気通貫のワークフロー**: データの生成、LoRAによる学習、学習済みモデルとの対話までをシンプルなスクリプトで完結。
 
+---
+
+## 1. セットアップ
+
+### 1.1. リポジトリの準備
 ```bash
 git clone https://github.com/hrnk420/AiV2.git
 cd AiV2
 ```
 
-### 1.2. ベースモデルのダウンロード
-
-ファインチューニングの土台となる`mpt-7b-instruct`モデル（約14GB）をダウンロードします。
-
-```bash
-# Git LFSがインストールされている必要があります
-git clone https://huggingface.co/mosaicml/mpt-7b-instruct ./mpt-7b-instruct
-```
-
-### 1.3. 仮想環境の構築とライブラリのインストール
-
-Python 3.9環境での動作を確認しています。
-
+### 1.2. 環境構築
+Python 3.10〜3.12 環境を推奨します。
 ```bash
 # 仮想環境の作成
 python -m venv venv
-
-# 仮想環境のアクティベート (Windowsの場合)
+# アクティベート (Windows)
 .\venv\Scripts\Activate.ps1
 
-# 必要なライブラリをインストール
+# 必要なライブラリのインストール
 pip install -r requirements.txt
+```
+
+### 1.3. APIキーの設定
+プロジェクトのルートディレクトリに `.env` ファイルを作成し、Gemini APIキーを記述してください。
+```text
+GEMINI_API_KEY=your_google_api_key_here
 ```
 
 ---
@@ -48,41 +46,42 @@ pip install -r requirements.txt
 ## 2. 使い方
 
 ### ステップ1: 学習データの生成 (`datacreate.py`)
-
-1.  `questions.txt`ファイルに、学習させたいQ&Aの「質問」を1行ずつ記述します。
-2.  `datacreate.py`を実行する環境で、`GEMINI_API_KEY`という名前の環境変数を設定します。
-3.  以下のコマンドを実行すると、Gemini APIが各質問に対する回答を生成し、`data.json`というファイルに保存します。
-
-    ```bash
-    python datacreate.py
-    ```
+`questions.txt` に記述された質問に基づき、Gemini APIが回答を生成し `data.json` に保存します。
+```bash
+python datacreate.py
+```
+※ 無料枠のAPI制限（RPM）を考慮し、安全な待機時間を設けています。
 
 ### ステップ2: ファインチューニング (`finetuning.py`)
-
-`data.json`を使って、ベースモデルの追加学習を行います。学習が完了すると、モデルの差分データが`lora_output`フォルダに保存されます。
-
+生成された `data.json` を使用して、Phi-2モデルにLoRA微調整を施します。
 ```bash
 python finetuning.py
 ```
+- **GPU環境**: 自動的に4ビット量子化が行われ、高速に学習が進みます。
+- **CPU環境**: オフロード機能を利用して学習を行います（時間がかかる場合があります）。
+- 学習済みパラメータは `./lora_output_phi2` に保存されます。
 
-**注意:** CPUでの実行には、数時間単位の非常に長い時間がかかります。
-
-### ステップ3: 推論 (`inference.py`)
-
-ファインチューニングしたモデルと対話します。
-
+### ステップ3: AIとの対話 (`inference.py`)
+学習したモデルを読み込んで、対話形式で動作を確認します。
 ```bash
 python inference.py
 ```
 
-スクリプトが起動し、「入力してください:」と表示されたら、質問を入力してモデルの応答を確認できます。CPUでの応答生成には数分かかることがあります。
+---
+
+## 3. 推奨設定と注意点
+
+- **データ量**: 高品質な回答を得るためには、最低でも 100〜200 件程度のデータを `data.json` に蓄積することを推奨します。
+- **制限事項**: Gemini APIの無料枠には1日のリクエスト上限があります。制限に達した場合は翌日に再開してください。
+- **セキュリティ**: `.env` や学習済みの巨大なモデルファイルは `.gitignore` により保護されており、GitHubにはアップロードされません。
 
 ---
 
-##謝辞
+## 謝辞と技術スタック
 
-このプロジェクトは、以下の素晴らしい技術を利用しています。
+- **Base Model:** [Microsoft Phi-2](https://huggingface.co/microsoft/phi-2)
+- **Data Generation:** [Google Gemini API](https://ai.google.dev/)
+- **Libraries:** [Hugging Face Transformers](https://github.com/huggingface/transformers), [PEFT](https://github.com/huggingface/peft), [PyTorch](https://pytorch.org/)
 
-- **モデル:** [MosaicML MPT-7B-Instruct](https://huggingface.co/mosaicml/mpt-7b-instruct)
-- **データ生成:** [Google Gemini](https://ai.google.dev/)
-- **ライブラリ:** [Hugging Face Transformers](https://github.com/huggingface/transformers), [PEFT](https://github.com/huggingface/peft), [PyTorch](https://pytorch.org/)
+---
+Created by [hrnk420](https://github.com/hrnk420)
