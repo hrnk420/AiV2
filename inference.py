@@ -6,7 +6,7 @@ import os
 import time
 
 # プロンプトテンプレート (Phi-2 形式)
-PROMPT_TEMPLATE = "Instruct: {instruction}\nOutput:"
+PROMPT_TEMPLATE = "Instruct: {instruction}\nOutput: "
 
 def main():
     # 学習時と同じモデルを使用
@@ -19,8 +19,8 @@ def main():
 
     # トークナイザー
     tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "right"
 
     # モデルロード
     print(f"Loading base model: {base_model_path}...")
