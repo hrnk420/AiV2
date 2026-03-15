@@ -27,9 +27,9 @@ cd AiV2
 Python 3.10〜3.12 環境を推奨します。
 ```bash
 # 仮想環境の作成
-python -m venv venv
+python3.12 -m venv venv  3.12の場合
 # アクティベート (Windows)
-.\venv\Scripts\Activate.ps1
+.\venv\Scripts\activate
 
 # 必要なライブラリのインストール
 pip install -r requirements.txt
