@@ -6,7 +6,7 @@ import os
 import time
 
 # プロンプトテンプレート (Phi-2 形式)
-PROMPT_TEMPLATE = "Instruct: {instruction}\nOutput: "
+PROMPT_TEMPLATE = "Instruct: {instruction}\nOutput:"
 
 def main():
     # 学習時と同じモデルを使用
