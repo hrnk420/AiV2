@@ -65,7 +65,7 @@ def main():
         ]
         tokenized = tokenizer(
             full_texts,
-            max_length=256, 
+            max_length=128, # 256から128に縮小
             padding="max_length",
             truncation=True,
         )
@@ -74,13 +74,13 @@ def main():
 
     tokenized_dataset = dataset.map(tokenize_fn, batched=True, remove_columns=["prompt", "response"])
 
-    # 学習設定 (GPU向けに最適化)
+    # 学習設定 (GPU向けに最適化 - 高速化版)
     training_args = TrainingArguments(
         output_dir="./lora_output_phi2",
         per_device_train_batch_size=1,
-        gradient_accumulation_steps=4, # メモリ節約
-        num_train_epochs=3,
-        learning_rate=2e-4,
+        gradient_accumulation_steps=1, # 4から1に変更して更新頻度を上げ、進捗を速める
+        num_train_epochs=10, # 15から10に調整
+        learning_rate=1e-4,
         logging_steps=1,
         save_strategy="no",
         fp16=True, # GPUでの高速化
