@@ -3,6 +3,8 @@ import os
 import json
 import time
 import sys
+import random
+import re
 from tqdm import tqdm
 from dotenv import load_dotenv
 
@@ -12,52 +14,24 @@ load_dotenv()
 # APIキー設定
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    print("エラー: GEMINI_API_KEY が設定されていません。.env ファイルを確認してください。")
+    print("エラー: GEMINI_API_KEY が設定されていません。")
     sys.exit(1)
 
-genai.configure(api_key=api_key)
-
-#--- 利用可能なモデルをチェック ---
-def get_available_model():
-    print("利用可能なモデルを検索中・・・")
-    try:
-        available_models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-
-        # 優先順位リスト
-        priorities = [
-            "models/gemini-1.5-flash",
-            "models/gemini-1.5-flash-latest",
-            "models/gemini-2.0-flash",
-            "models/gemini-2.0-flash-lite"
-            "models/gemini-1.0-pro"
-        ]
-
-        for p in priorities:
-            if p in available_models:
-                print(f"モデル '{p}' を使用します。")
-                return p
-        if available_models:
-            print(f"優先モデルが見つからないため、'{available_models[0]}'を使用します。")
-            return available_models[0]
-
-        raise Exception("利用可能なモデルが見つかりません。APIキーを確認してください。")
-    except Exception as e:
-        print(f"モデルリストの取得中にエラーが発生しました： {e}")
-        # フォールバック
-        return "models/gemini-1.5-flash"
-
-MODEL_NAME = "models/gemini-1.5-flash"
+# 【重要】REST通信を使用し、モデルを固定
+genai.configure(api_key=api_key, transport='rest')
+MODEL_NAME = "models/gemma-3-4b-it"
 OUTPUT_FILE = "data.json"
 QUESTIONS_FILE = "questions.txt"
 
-# リトライ設定
-MAX_RETRIES = 4
-RETRY_WAIT_SECONDS = 50 # Flashモデルはリミットが緩いため短縮
-WAIT_BETWEEN_REQUESTS = 30
+# --- 負荷に配慮した「安全・継続」設定 ---
+FIXED_WAIT = 25              # 25秒（TPM制限を考慮）
+MAX_RETRIES = 3
+RETRY_DELAY = 60             # エラー時は1分待機
 
-print(f"=== Geminiデータ生成モード (Model: {MODEL_NAME}) ===")
+print(f"=== Gemma 3 4B 安定化モード (続きから再開対応) ===")
+print(f"Model: {MODEL_NAME}")
 
-# --- 1. 既存のデータを読み込む ---
+# --- 1. 既存データの読み込み ---
 existing_results = []
 processed_prompts = set()
 if os.path.exists(OUTPUT_FILE):
@@ -68,72 +42,86 @@ if os.path.exists(OUTPUT_FILE):
                 existing_results = json.loads(content)
                 for record in existing_results:
                     if 'prompt' in record:
-                        processed_prompts.add(record['prompt'])
-        if existing_results:
-            print(f"'{OUTPUT_FILE}' から {len(existing_results)} 件の既存データを読み込みました。")
+                        # 既存の質問文をセットに追加
+                        processed_prompts.add(record['prompt'].strip())
+        print(f"既存データ: {len(existing_results)} 件")
     except Exception as e:
-        print(f"警告: '{OUTPUT_FILE}' の読み込みに失敗しました。 ({e})")
+        print(f"警告: {e}")
 
-# --- 2. 質問リストを読み込む ---
+# --- 2. 質問リストの読み込み ---
 try:
     with open(QUESTIONS_FILE, "r", encoding="utf-8") as f:
         all_questions = [line.strip() for line in f if line.strip()]
 except FileNotFoundError:
-    print(f"エラー: '{QUESTIONS_FILE}' が見つかりません。")
+    print(f"エラー: {QUESTIONS_FILE} が見つかりません。")
     sys.exit(1)
 
+# 重複を排除して未処理のリストを作成
 questions_to_process = [q for q in all_questions if q not in processed_prompts]
+print(f"未処理: {len(questions_to_process)} 件 (全 {len(all_questions)} 件中)\n")
 
 if not questions_to_process:
-    print("すべての質問の処理が完了しています。")
+    print("すべての質問が処理済みです。")
     sys.exit(0)
 
-# --- 4. データ生成 ---
-# システムインストラクション: 1.5 Flashの無料枠(1M TPM)に収まるよう、適度な長さを指定
+# --- 3. データ生成 ---
 SYSTEM_INSTRUCTION = (
-"あなたはプログラミングの専門家です。質問に対して、正確かつ簡潔に回答してください。"
-"回答は必ず日本語で行い、重要なポイントとコード例を含めてください。"
-"全体の文字数は、句読点を含めて400文字程度に収めてください。"
+    "Python講師として回答してください。必ず以下の形式で回答してください。\n\n"
+    "---START---\n"
+    "RESPONSE: (回答内容をここに記載。コード例を含める。)\n"
+    "---END---\n\n"
+    "質問: "
 )
 
-model = genai.GenerativeModel(MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION)
+model = genai.GenerativeModel(MODEL_NAME)
 
-pbar = tqdm(questions_to_process, desc="生成中")
-for prompt in pbar:
+pbar = tqdm(questions_to_process, desc="生成進捗")
+for original_prompt in pbar:
     success = False
+    full_prompt = SYSTEM_INSTRUCTION + original_prompt
+
     for attempt in range(MAX_RETRIES):
         try:
             response = model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.7,
-                    max_output_tokens=1024, # 400文字程度なら十分
-                )
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(temperature=0.3)
             )
             
             if response.text:
-                answer = response.text.strip()
-                existing_results.append({"prompt": prompt, "response": answer})
+                text = response.text.strip()
                 
-                # 毎回保存（安全のため）
-                with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-                    json.dump(existing_results, f, ensure_ascii=False, indent=4)
+                # RESPONSE: から始まり、---END--- または末尾までを抽出
+                response_match = re.search(r"RESPONSE:\s*(.*?)(?:\s*---END---|(?:\s*$))", text, re.DOTALL)
                 
-                success = True
-                break
+                if response_match:
+                    r_val = response_match.group(1).strip()
+                    
+                    # 保存するデータを作成
+                    # promptにはモデルの出力ではなく「元の質問原文」を入れる（これで重複判定が確実になる）
+                    res_data = {"prompt": original_prompt, "response": r_val}
+                    
+                    processed_prompts.add(original_prompt)
+                    existing_results.append(res_data)
+                    
+                    # 保存
+                    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+                        json.dump(existing_results, f, ensure_ascii=False, indent=4)
+                    
+                    success = True
+                    break
+                
         except Exception as e:
-            if "429" in str(e) or "Resource has been exhausted" in str(e): # Rate limit
-                print(f"\n[制限エラー] APIの利用制限に達しました。")
-                print(f"エラー内容： {e}")
-                print("現在までのデータを保存して終了します。明日以降に再開するか、別のモデルを試してください。")
-                # ループを抜けて保存処理へ
-                success = False
-                break
+            error_str = str(e)
+            if "429" in error_str or "quota" in error_str:
+                pbar.write(f"\n⚠ 制限(429)検知。{RETRY_DELAY}秒停止します。")
+                time.sleep(RETRY_DELAY)
             else:
-                pbar.write(f"エラー ({prompt[:20]}...): {e}")
-                break
+                pbar.write(f"\n✗ エラー: {error_str[:100]}")
+                time.sleep(10)
 
-    if success:
-        time.sleep(WAIT_BETWEEN_REQUESTS)
+    if not success:
+        pbar.write(f"\n❌ 失敗: '{original_prompt[:20]}...' (リトライ上限)")
+    
+    time.sleep(FIXED_WAIT)
 
-print(f"\n完了! 合計 {len(existing_results)} 件のデータを '{OUTPUT_FILE}' に保存しました。")
+print(f"\n✅ 完了! 合計: {len(existing_results)} 件")

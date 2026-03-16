@@ -1,5 +1,7 @@
 # --- 秘密情報 (絶対NG) ---
 .env
+data.json
+datacreate_backup.py
 
 # --- 巨大なフォルダ・モデル本体 (GitHubの制限を超えるため) ---
 venv/

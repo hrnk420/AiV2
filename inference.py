@@ -1,6 +1,6 @@
-# 推論モード (Phi-2版・軽量高性能)
+# 推論モード (Phi-2版・GPU/4bit量子化対応)
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from peft import PeftModel
 import os
 import time
@@ -9,26 +9,30 @@ import time
 PROMPT_TEMPLATE = "Instruct: {instruction}\nOutput: "
 
 def main():
-    # 学習時と同じモデルを使用
     lora_model_path = "./lora_output_phi2"
     base_model_path = "microsoft/phi-2"
 
-    # ハードウェア検知
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    print("Loading model for inference...")
 
     # トークナイザー
-    tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(base_model_path)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
-    # モデルロード
-    print(f"Loading base model: {base_model_path}...")
+    # 4bit量子化の設定 (VRAM 6GB 対策)
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+    )
+
+    # ベースモデルロード (GPU明示的に指定)
     base_model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
-        torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-        trust_remote_code=True,
-        device_map="auto" if device == "cuda" else {"": "cpu"},
+        quantization_config=bnb_config,
+        device_map={"": 0},
+        trust_remote_code=False
     )
 
     # LoRA適用
@@ -50,7 +54,7 @@ def main():
 
         # プロンプト作成
         full_prompt = PROMPT_TEMPLATE.format(instruction=user_input)
-        inputs = tokenizer(full_prompt, return_tensors="pt").to(device)
+        inputs = tokenizer(full_prompt, return_tensors="pt").to("cuda") # GPUに移動
         
         print("\n⏳ 思考中...")
         start_time = time.time()
