@@ -72,3 +72,5 @@ yarl==1.22.0
 zipp==3.23.0
 protobuf==5.29.5
 python-dotenv==1.2.2
+bitsandbytes
+trl
