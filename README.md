@@ -1,6 +1,6 @@
-# AI-v2: Phi-2 & Gemini 連携ファインチューニング・システム
+# AI-v2: Phi-2 & Gemma 3 連携ファインチューニング・システム
 
-このプロジェクトは、Googleの **Gemini 1.5 Flash API** を使用して高品質な学習データを自動生成し、Microsoftの軽量・高性能モデル **Phi-2** をベースに **LoRA (Low-Rank Adaptation)** を用いて独自の微調整（ファインチューニング）を行うための統合ツールキットです。
+このプロジェクトは、Googleの **Gemma 3 4B** を使用して高品質な学習データを自動生成し、Microsoftの軽量・高性能モデル **Phi-2** をベースに **LoRA (Low-Rank Adaptation)** を用いて独自の微調整（ファインチューニング）を行うための統合ツールキットです。
 
 Windows環境のCPUのみでも動作するように最適化されており、GPU（CUDA）があれば自動的に検知して高速な学習・量子化推論を行います。
 
@@ -8,7 +8,7 @@ Windows環境のCPUのみでも動作するように最適化されており、G
 
 ## 主な特徴
 
-- **自動データ生成 (`datacreate.py`)**: Gemini 1.5 Flash API を活用し、質問リストからプログラミング解説データセットを自動構築。
+- **自動データ生成 (`datacreate.py`)**: Gemma 3 4B を活用し、質問リストからプログラミング解説データセットを自動構築。
 - **軽量・高性能モデル (`Phi-2`)**: 27億パラメータながら高い性能を持つ `microsoft/phi-2` を採用。低メモリ環境でも動作可能。
 - **ハードウェア自動最適化**: CUDAが利用可能な場合は、4ビット量子化（bitsandbytes）とFP16演算を自動適用。
 - **一気通貫のワークフロー**: データの生成、LoRAによる学習、学習済みモデルとの対話までをシンプルなスクリプトで完結。
@@ -27,12 +27,18 @@ cd AiV2
 Python 3.10〜3.12 環境を推奨します。
 ```bash
 # 仮想環境の作成
-python3.12 -m venv venv  3.12の場合
+python3.12 -m venv venv
 # アクティベート (Windows)
 .\venv\Scripts\activate
 
-# 必要なライブラリのインストール
+# 1. 依存関係の競合を避けるため、まず PyTorch 関連を正しい組み合わせでインストールします
+pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+
+# 2. その他のライブラリをインストール
 pip install -r requirements.txt
+
+# もし依存関係のエラー（ERROR: pip's dependency resolver...）が残る場合は、以下を個別に実行してください
+pip install --upgrade transformers accelerate trl
 ```
 
 ### 1.3. APIキーの設定

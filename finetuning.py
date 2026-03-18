@@ -1,6 +1,6 @@
 # モデル学習 (Phi-2版・GPU/4bit量子化対応)
 import torch
-import subprocess
+import os
 import sys
 from datasets import load_dataset
 from transformers import (
@@ -8,41 +8,27 @@ from transformers import (
     AutoTokenizer, 
     Trainer, 
     TrainingArguments,
-    BitsAndBytesConfig
+    BitsAndBytesConfig,
+    DataCollatorForLanguageModeling
 )
 from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
-import os
 
 # プロンプトテンプレート (Phi-2 形式)
 PROMPT_TEMPLATE = "Instruct: {instruction}\nOutput: {response}"
 
-def update_libraries():
-    """実行前に必要なライブラリをアップデートする"""
-    print("Checking and updating libraries...")
-    try:
-        # sys.executable を使用して現在の仮想環境のpipを叩く
-        subprocess.check_call([
-            sys.executable, "-m", "pip", "install", "--upgrade", 
-            "transformers", "diffusers", "accelerate", "datasets>=3.0.0"
-        ])
-        print("Libraries updated successfully.")
-    except Exception as e:
-        print(f"Warning: Failed to update libraries: {e}")
-
 def main():
-    # 実行前にライブラリを更新
-    update_libraries()
-
     model_path = "microsoft/phi-2"
+    output_dir = "./lora_output_phi2"
     
     print(f"Loading model: {model_path}...")
 
-    # GPU利用可否の判定
-    is_cuda = torch.cuda.is_available()
-    print(f"CUDA available: {is_cuda}")
+    # デバイス設定
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    is_cuda = (device == "cuda")
+    print(f"Using device: {device}")
 
     # トークナイザーのロード
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
@@ -57,7 +43,6 @@ def main():
         )
 
     # モデルロード
-    # low_cpu_mem_usage=True を追加してCPU上での不要な初期化（Byte型エラー）を回避
     base_model = AutoModelForCausalLM.from_pretrained(
         model_path,
         quantization_config=bnb_config,
@@ -67,9 +52,7 @@ def main():
         low_cpu_mem_usage=True
     )
     
-    if is_cuda:
-        base_model = base_model.to("cuda")
-    else:
+    if not is_cuda:
         base_model = base_model.to("cpu") 
 
     # 量子化モデルの学習準備 (GPU時のみ)
@@ -89,6 +72,10 @@ def main():
     model.print_trainable_parameters()
 
     # データセット
+    if not os.path.exists("data.json"):
+        print("エラー: data.json が見つかりません。先に datacreate.py を実行してください。")
+        sys.exit(1)
+
     dataset = load_dataset("json", data_files="data.json")
 
     def tokenize_fn(examples):
@@ -98,46 +85,52 @@ def main():
         ]
         tokenized = tokenizer(
             full_texts,
-            max_length=1024,
-            padding="max_length",
+            max_length=512, # 1024から512に短縮してメモリ節約（必要に応じて調整）
             truncation=True,
         )
-        tokenized["labels"] = [ids[:] for ids in tokenized["input_ids"]]
         return tokenized
 
     tokenized_dataset = dataset.map(tokenize_fn, batched=True, remove_columns=["prompt", "response"])
 
-    # 学習設定 (日本語能力向上のためのしっかり学習版)
+    # チェックポイントの有無確認
+    resume_from_checkpoint = False
+    if os.path.exists(output_dir) and any(d.startswith("checkpoint-") for d in os.listdir(output_dir)):
+        resume_from_checkpoint = True
+        print(f"Found checkpoint in {output_dir}. Resuming training...")
+
+    # 学習設定
     training_args = TrainingArguments(
-        output_dir="./lora_output_phi2",
+        output_dir=output_dir,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
-        num_train_epochs=15, # 3から15に増やして日本語を叩き込む
-        learning_rate=2e-5, # 少しだけ上げる
-        logging_steps=1,
-        save_strategy="epoch", # 万が一のためにエポックごとに保存
-        save_total_limit=3, # 最新の3つだけ保持
-        fp16=False,
+        num_train_epochs=10, 
+        learning_rate=2e-5,
+        logging_steps=10,
+        save_strategy="epoch",
+        save_total_limit=2,
+        fp16=is_cuda, # GPU時は高速化
         max_grad_norm=0.3,
         warmup_steps=20,
-        optim="paged_adamw_8bit",
+        optim="paged_adamw_8bit" if is_cuda else "adamw_torch",
         report_to="none",
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
+        remove_unused_columns=False,
     )
 
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=tokenized_dataset["train"],
-        processing_class=tokenizer,
+        data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
     )
 
-    print("GPUでの学習を開始します...")
-    # チェックポイントがあればそこから再開、なければ最初から開始
-    trainer.train(resume_from_checkpoint=True)
-    trainer.save_model("./lora_output_phi2")
-    print("学習が完了しました。")
+    print("学習を開始します...")
+    trainer.train(resume_from_checkpoint=resume_from_checkpoint)
+    
+    # 最終モデルの保存
+    model.save_pretrained(output_dir)
+    print(f"学習が完了しました。保存先: {output_dir}")
 
 if __name__ == "__main__":
     main()
