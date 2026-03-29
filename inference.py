@@ -19,7 +19,7 @@ def main():
     print("Loading model for inference...")
 
     # トークナイザー
-    tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(base_model_path)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
@@ -38,7 +38,6 @@ def main():
         base_model_path,
         quantization_config=bnb_config,
         device_map="auto" if device == "cuda" else None,
-        trust_remote_code=True,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32,
     )
 

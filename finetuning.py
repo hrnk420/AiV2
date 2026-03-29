@@ -28,7 +28,7 @@ def main():
     print(f"Using device: {device}")
 
     # トークナイザーのロード
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
@@ -47,7 +47,6 @@ def main():
         model_path,
         quantization_config=bnb_config,
         device_map={"": 0} if is_cuda else None, 
-        trust_remote_code=True,
         torch_dtype="auto",
         low_cpu_mem_usage=True
     )
